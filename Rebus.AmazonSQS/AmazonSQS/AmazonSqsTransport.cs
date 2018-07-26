@@ -3,14 +3,18 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Amazon.Runtime;
+using Amazon.S3;
+using Amazon.S3.Transfer;
 using Amazon.SQS;
 using Amazon.SQS.Model;
+using Newtonsoft.Json;
 using Rebus.Bus;
 using Rebus.Config;
 using Rebus.Exceptions;
@@ -32,6 +36,7 @@ namespace Rebus.AmazonSQS
     public class AmazonSQSTransport : ITransport, IInitializable
     {
         const string OutgoingMessagesItemsKey = "SQS_OutgoingMessages";
+        const string S3FallbackHeader = "rebus-sqs-s3-fallback";
 
         readonly AmazonSQSTransportMessageSerializer _serializer = new AmazonSQSTransportMessageSerializer();
         readonly AWSCredentials _credentials;
@@ -283,21 +288,22 @@ namespace Rebus.AmazonSQS
                                 var messageId = headers[Headers.MessageId];
 
                                 var sqsMessage = new AmazonSQSTransportMessage(transportMessage.Headers, GetBody(transportMessage.Body));
-
                                 var serializedSqsMessage = _serializer.Serialize(sqsMessage);
-                                var serializedSqsMessageByteCount = Encoding.UTF8.GetByteCount(serializedSqsMessage);
+                                var entry = new SendMessageBatchRequestEntry(messageId, serializedSqsMessage);
+                                
+                                if (_options.S3Fallback.Enabled)
+                                {
+                                    var serializedSqsMessageByteCount = Encoding.UTF8.GetByteCount(serializedSqsMessage);
 
-                                SendMessageBatchRequestEntry entry;
-                                if (serializedSqsMessageByteCount > 256 * 1024)
-                                {
-                                    headers.Add("rebus-sqs-s3-fallback", "true");
-                                    // upload message to S3
-                                    var s3FallbackMessage = new AmazonSQSTransportMessage(headers, "bucket address to resource");
-                                    entry = new SendMessageBatchRequestEntry(messageId, _serializer.Serialize(s3FallbackMessage));
-                                }
-                                else
-                                {
-                                    entry = new SendMessageBatchRequestEntry(messageId, _serializer.Serialize(sqsMessage));
+                                    if (serializedSqsMessageByteCount >= _options.S3Fallback.ByteThreshold)
+                                    {
+                                        var s3FallbackMessage = UploadS3FallbackMessage(messageId, sqsMessage.Body, message.DestinationAddress);
+
+                                        headers.Add(S3FallbackHeader, s3FallbackMessage);
+                                        sqsMessage = new AmazonSQSTransportMessage(headers, JsonConvert.SerializeObject(s3FallbackMessage));
+
+                                        entry = new SendMessageBatchRequestEntry(messageId, _serializer.Serialize(sqsMessage));
+                                    }
                                 }
 
                                 var delaySeconds = GetDelaySeconds(headers);
@@ -328,6 +334,26 @@ namespace Rebus.AmazonSQS
                         }
                     })
                 );
+        }
+
+        S3FallbackMessage UploadS3FallbackMessage(string messageId, string body, string destinationAddress)
+        {
+            var uploadRequest = _options.S3Fallback.DefaultUploadRequest;
+
+            using (var s3Client = new AmazonS3Client(_credentials, _options.S3Fallback.AmazonS3Config))
+            using (var transferUtility = new TransferUtility(s3Client))
+            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(body)))
+            {
+                uploadRequest.Key = $"{destinationAddress}/{messageId}.json";
+                uploadRequest.InputStream = stream;
+                transferUtility.Upload(uploadRequest);
+            }
+
+            var s3FallbackMessage = new S3FallbackMessage(
+                uploadRequest.BucketName,
+                uploadRequest.Key);
+
+            return s3FallbackMessage;
         }
 
         int? GetDelaySeconds(IReadOnlyDictionary<string, string> headers)
@@ -481,13 +507,30 @@ namespace Rebus.AmazonSQS
         {
             var sqsMessage = _serializer.Deserialize(message.Body);
 
-            if (sqsMessage.Headers.ContainsKey("rebus-sqs-s3-fallback"))
-            {
-                var messageBody = ""; // Download from S3
-                sqsMessage = new AmazonSQSTransportMessage(sqsMessage.Headers, messageBody);
-            }
+            if (!(_options.S3Fallback.Enabled && sqsMessage.Headers.ContainsKey(S3FallbackHeader)))
+                return new TransportMessage(sqsMessage.Headers, GetBodyBytes(sqsMessage.Body));
+
+            var s3FallbackMessage = JsonConvert.DeserializeObject<S3FallbackMessage>(sqsMessage.Body);
+            sqsMessage.Body = ReadMessageBodyFromS3(s3FallbackMessage.BucketName, s3FallbackMessage.Key);
 
             return new TransportMessage(sqsMessage.Headers, GetBodyBytes(sqsMessage.Body));
+        }
+
+        string ReadMessageBodyFromS3(string bucketName, string key)
+        {
+            using (var s3Client = new AmazonS3Client(_credentials, _options.S3Fallback.AmazonS3Config))
+            using (var transferUtility = new TransferUtility(s3Client))
+            {
+                var openStreamRequest = _options.S3Fallback.DefaultOpenStreamRequest;
+                openStreamRequest.BucketName = bucketName;
+                openStreamRequest.Key = key;
+
+                using (var stream = transferUtility.OpenStream(openStreamRequest))
+                using (var reader = new StreamReader(stream))
+                {
+                    return reader.ReadToEnd();
+                }
+            }
         }
 
         static string GetBody(byte[] bodyBytes)
@@ -554,5 +597,21 @@ namespace Rebus.AmazonSQS
                 AsyncHelpers.RunSync(() => client.DeleteQueueAsync(_queueUrl));
             }
         }
+    }
+
+    internal class S3FallbackMessage
+    {
+        public string BucketName { get; set; }
+        public string Key { get; set; }
+
+        public S3FallbackMessage(string bucketName, string key)
+        {
+            BucketName = bucketName;
+            Key = key;
+        }
+
+        public override string ToString() => $"{BucketName}/{Key}";
+
+        public static implicit operator string(S3FallbackMessage message) => message.ToString();
     }
 }

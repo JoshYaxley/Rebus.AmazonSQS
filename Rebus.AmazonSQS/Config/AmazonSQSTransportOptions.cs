@@ -1,5 +1,7 @@
 ﻿using System;
 using Amazon.Runtime;
+using Amazon.S3;
+using Amazon.S3.Transfer;
 using Amazon.SQS;
 using Rebus.Bus;
 using Rebus.Transport;
@@ -36,6 +38,13 @@ namespace Rebus.Config
         public bool CreateQueues { get; set; }
 
         /// <summary>
+        /// Configures whether Rebus should use an S3 bucket as a fallback for when messages are too big to fit on an SQS queue
+        /// </summary>
+        public S3FallbackOptions S3Fallback { get; set; }
+
+
+
+        /// <summary>
         /// Default constructor of the exposed SQS transport options.
         /// </summary>
         public AmazonSQSTransportOptions()
@@ -43,6 +52,14 @@ namespace Rebus.Config
             ReceiveWaitTimeSeconds = 1;
             UseNativeDeferredMessages = true;
             CreateQueues = true;
+            S3Fallback = new S3FallbackOptions
+            {
+                Enabled = false,
+                ByteThreshold = 200_000,
+                AmazonS3Config = new AmazonS3Config(),
+                DefaultUploadRequest = new TransferUtilityUploadRequest(),
+                DefaultOpenStreamRequest = new TransferUtilityOpenStreamRequest()
+            };
 
             GetOrCreateClient = (context, credentials, config) =>
             {
@@ -60,5 +77,42 @@ namespace Rebus.Config
         /// </summary>
         /// <returns>The <cref type="IAmazonSQS"/> object to be used for SQS.</returns>
         public Func<ITransactionContext, AWSCredentials, AmazonSQSConfig, IAmazonSQS> GetOrCreateClient;
+    }
+
+    /// <summary>
+    /// Options controlling if/how Rebus should use an S3 bucket as a fallback for when messages are too big to fit on an SQS queue.
+    /// </summary>
+    public class S3FallbackOptions
+    {
+        /// <summary>
+        /// Enables the S3 fallback.
+        /// Defaults to <code>false</code>
+        /// </summary>
+        public bool Enabled { get; set; }
+
+        /// <summary>
+        /// The number of bytes a message's size must reach to be eligible for S3 fallback.
+        /// SQS has a message size limit of 256KB, so this threshold should be less than this.
+        /// Defaults to <code>200_000</code>
+        /// </summary>
+        public int ByteThreshold { get; set; }
+
+        /// <summary>
+        /// The AmazonS3Config to use when creating the AmazonS3Client. Set region here.
+        /// </summary>
+        public AmazonS3Config AmazonS3Config { get; set; }
+
+        /// <summary>
+        /// The default TransferUtilityUploadRequest object to use when uploading to S3.
+        /// Key will be overridden at point of upload.
+        /// Set BucketName here.
+        /// </summary>
+        public TransferUtilityUploadRequest DefaultUploadRequest { get; set; }
+
+        /// <summary>
+        /// The default TransferUtilityOpenStreamRequest object to use when reading from S3.
+        /// Key and BucketName will be overridden at point of read.
+        /// </summary>
+        public TransferUtilityOpenStreamRequest DefaultOpenStreamRequest { get; set; }
     }
 }

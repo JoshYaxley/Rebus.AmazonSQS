@@ -47,6 +47,7 @@
     <None Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" Version="3.3.20" />
     <PackageReference Include="awssdk.sqs" Version="3.3.3.*" />
     <PackageReference Include="Rebus" Version="4.2.*" />
   </ItemGroup>
