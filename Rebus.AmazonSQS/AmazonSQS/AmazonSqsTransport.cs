@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Amazon.Runtime;
@@ -283,7 +284,21 @@ namespace Rebus.AmazonSQS
 
                                 var sqsMessage = new AmazonSQSTransportMessage(transportMessage.Headers, GetBody(transportMessage.Body));
 
-                                var entry = new SendMessageBatchRequestEntry(messageId, _serializer.Serialize(sqsMessage));
+                                var serializedSqsMessage = _serializer.Serialize(sqsMessage);
+                                var serializedSqsMessageByteCount = Encoding.UTF8.GetByteCount(serializedSqsMessage);
+
+                                SendMessageBatchRequestEntry entry;
+                                if (serializedSqsMessageByteCount > 256 * 1024)
+                                {
+                                    headers.Add("rebus-sqs-s3-fallback", "true");
+                                    // upload message to S3
+                                    var s3FallbackMessage = new AmazonSQSTransportMessage(headers, "bucket address to resource");
+                                    entry = new SendMessageBatchRequestEntry(messageId, _serializer.Serialize(s3FallbackMessage));
+                                }
+                                else
+                                {
+                                    entry = new SendMessageBatchRequestEntry(messageId, _serializer.Serialize(sqsMessage));
+                                }
 
                                 var delaySeconds = GetDelaySeconds(headers);
 
@@ -465,6 +480,13 @@ namespace Rebus.AmazonSQS
         TransportMessage ExtractTransportMessageFrom(Message message)
         {
             var sqsMessage = _serializer.Deserialize(message.Body);
+
+            if (sqsMessage.Headers.ContainsKey("rebus-sqs-s3-fallback"))
+            {
+                var messageBody = ""; // Download from S3
+                sqsMessage = new AmazonSQSTransportMessage(sqsMessage.Headers, messageBody);
+            }
+
             return new TransportMessage(sqsMessage.Headers, GetBodyBytes(sqsMessage.Body));
         }
 
