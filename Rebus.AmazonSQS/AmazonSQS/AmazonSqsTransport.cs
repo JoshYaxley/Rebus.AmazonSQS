@@ -393,6 +393,9 @@ namespace Rebus.AmazonSQS
             }
 
             var client = GetSqsClientFromTransactionContext(context);
+            var transferUtility = _options.S3Fallback.Enabled
+                ? _options.GetOrCreateTransferUtility(context, _credentials, _options.S3Fallback.AmazonS3Config)
+                : null;
 
             var request = new ReceiveMessageRequest(_queueUrl)
             {
@@ -418,7 +421,7 @@ namespace Rebus.AmazonSQS
 
                 // if we get this far, we don't want to pass on the cancellation token
                 // ReSharper disable once MethodSupportsCancellation
-                await DeleteMessageAsync(transportMessage, sqsMessage, context);
+                await DeleteMessageAsync(transportMessage, sqsMessage, client, transferUtility);
             });
 
             context.OnAborted(() =>
@@ -431,30 +434,25 @@ namespace Rebus.AmazonSQS
             {
                 // if the message is expired , we don't want to pass on the cancellation token
                 // ReSharper disable once MethodSupportsCancellation
-                await DeleteMessageAsync(transportMessage, sqsMessage, context);
+                await DeleteMessageAsync(transportMessage, sqsMessage, client, transferUtility);
                 return null;
             }
             renewalTask.Start();
             return transportMessage;
         }
 
-        async Task DeleteMessageAsync(TransportMessage transportMessage, Message sqsMessage, ITransactionContext context)
+        async Task DeleteMessageAsync(TransportMessage transportMessage, Message sqsMessage, IAmazonSQS sqsClient, ITransferUtility transferUtility)
         {
-            var client = GetSqsClientFromTransactionContext(context);
-
-            await client.DeleteMessageAsync(new DeleteMessageRequest(_queueUrl, sqsMessage.ReceiptHandle));
+            await sqsClient.DeleteMessageAsync(new DeleteMessageRequest(_queueUrl, sqsMessage.ReceiptHandle));
 
             if (_options.S3Fallback.Enabled && transportMessage.Headers.ContainsKey(S3FallbackHeader))
             {
-                using (var transferUtility = _options.GetOrCreateTransferUtility(context, _credentials, _options.S3Fallback.AmazonS3Config))
+                var s3FallbackMessage = S3FallbackMessage.FromHeader(transportMessage.Headers[S3FallbackHeader]);
+                await transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
                 {
-                    var s3FallbackMessage = S3FallbackMessage.FromHeader(transportMessage.Headers[S3FallbackHeader]);
-                    await transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
-                    {
-                        BucketName = s3FallbackMessage.BucketName,
-                        Key = s3FallbackMessage.Key
-                    });
-                }
+                    BucketName = s3FallbackMessage.BucketName,
+                    Key = s3FallbackMessage.Key
+                });
             }
         }
 
