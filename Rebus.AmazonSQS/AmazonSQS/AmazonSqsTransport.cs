@@ -36,8 +36,12 @@ namespace Rebus.AmazonSQS
     /// </summary>
     public class AmazonSQSTransport : ITransport, IInitializable
     {
-        const string OutgoingMessagesItemsKey = "SQS_OutgoingMessages";
+        /// <summary>
+        /// The name of the header attached to the message when S3 fallback has been used
+        /// </summary>
         public static string S3FallbackHeader => "rbs2-sqs-s3-fallback";
+
+        const string OutgoingMessagesItemsKey = "SQS_OutgoingMessages";
 
         readonly AmazonSQSTransportMessageSerializer _serializer = new AmazonSQSTransportMessageSerializer();
         readonly AWSCredentials _credentials;
