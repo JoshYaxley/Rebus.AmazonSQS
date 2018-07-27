@@ -17,14 +17,14 @@ namespace Rebus.AmazonSQS.Tests
     [TestFixture, Category(Category.AmazonSqs)]
     public class AmazonSqsTrivialMessageRoundtrip : SqsFixtureBase
     {
-        AmazonSQSTransport _transport;
-        string _brilliantQueueName;
+        protected AmazonSQSTransport Transport;
+        protected string BrilliantQueueName;
 
         protected override void SetUp()
         {
-            _brilliantQueueName = TestConfig.GetName("roundtrippin");
-            _transport = AmazonSqsTransportFactory.CreateTransport(_brilliantQueueName, TimeSpan.FromSeconds(30));
-            _transport.Purge();
+            BrilliantQueueName = TestConfig.GetName("roundtrippin");
+            Transport = AmazonSqsTransportFactory.CreateTransport(BrilliantQueueName, TimeSpan.FromSeconds(30));
+            Transport.Purge();
         }
 
         [Test]
@@ -36,10 +36,10 @@ namespace Rebus.AmazonSQS.Tests
             {
                 var message = new TransportMessage(NewFineHeaders(), Encoding.UTF8.GetBytes(positiveGreeting));
 
-                await _transport.Send(_brilliantQueueName, message, context);
+                await Transport.Send(BrilliantQueueName, message, context);
             });
 
-            var receivedMessage = await _transport.WaitForNextMessage();
+            var receivedMessage = await Transport.WaitForNextMessage();
 
             Assert.That(Encoding.UTF8.GetString(receivedMessage.Body), Is.EqualTo(positiveGreeting));
         }
@@ -57,7 +57,7 @@ namespace Rebus.AmazonSQS.Tests
                 });
 
                 Configure.With(activator)
-                    .Transport(t => t.Register(c => _transport))
+                    .Transport(t => t.Register(c => Transport))
                     .Start();
 
                 await activator.Bus.SendLocal("HAIIIIIIIIIIIIIIIIII!!!!111");

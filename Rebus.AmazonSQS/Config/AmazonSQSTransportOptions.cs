@@ -54,14 +54,7 @@ namespace Rebus.Config
             ReceiveWaitTimeSeconds = 1;
             UseNativeDeferredMessages = true;
             CreateQueues = true;
-            S3Fallback = new S3FallbackOptions
-            {
-                Enabled = false,
-                ByteThreshold = 200_000,
-                AmazonS3Config = new AmazonS3Config(),
-                DefaultUploadRequest = new TransferUtilityUploadRequest(),
-                DefaultOpenStreamRequest = new TransferUtilityOpenStreamRequest()
-            };
+            S3Fallback = new S3FallbackOptions();
 
             GetOrCreateSqsClient = (context, credentials, config) =>
             {
@@ -150,5 +143,17 @@ namespace Rebus.Config
         /// Key and BucketName will be overridden at point of read.
         /// </summary>
         public TransferUtilityOpenStreamRequest DefaultOpenStreamRequest { get; set; }
+
+        /// <summary>
+        /// Default constructor of the exposed S3 fallback options.
+        /// </summary>
+        public S3FallbackOptions()
+        {
+            Enabled = false;
+            ByteThreshold = 200_000;
+            AmazonS3Config = new AmazonS3Config();
+            DefaultUploadRequest = new TransferUtilityUploadRequest();
+            DefaultOpenStreamRequest = new TransferUtilityOpenStreamRequest();
+        }
     }
 }

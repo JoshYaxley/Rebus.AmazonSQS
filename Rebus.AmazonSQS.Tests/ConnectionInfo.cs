@@ -9,12 +9,14 @@ namespace Rebus.AmazonSQS.Tests
     {
         public string AccessKeyId { get; }
         public string SecretAccessKey { get; }
+        public string BucketName { get; }
         public RegionEndpoint RegionEndpoint { get; }
 
-        ConnectionInfo(string accessKeyId, string secretAccessKey, string regionEndpointName)
+        ConnectionInfo(string accessKeyId, string secretAccessKey, string bucketName, string regionEndpointName)
         {
             AccessKeyId = accessKeyId;
             SecretAccessKey = secretAccessKey;
+            BucketName = bucketName;
             RegionEndpoint = GetRegionEndpoint(regionEndpointName);
         }
 
@@ -33,13 +35,14 @@ namespace Rebus.AmazonSQS.Tests
                 return new ConnectionInfo(
                     keysAndValues.GetValue("AccessKeyId"),
                     keysAndValues.GetValue("SecretAccessKey"),
+                    keysAndValues.GetValue("BucketName"),
                     keysAndValues.GetValue("RegionEndpoint")
                 );
 
             }
             catch (Exception exception)
             {
-                throw new FormatException($"Could not extract access key ID, secret access key, and region endpoint from the given string - expected the form 'AccessKeyId=blabla; SecretAccessKey=blablalba; RegionEndpoint=something'", exception);
+                throw new FormatException($"Could not extract access key ID, secret access key, bucket name, and region endpoint from the given string - expected the form 'AccessKeyId=blabla; SecretAccessKey=blablalba; BucketName=something; RegionEndpoint=something'", exception);
             }
         }
 

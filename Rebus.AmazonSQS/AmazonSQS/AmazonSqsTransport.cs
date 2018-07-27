@@ -343,7 +343,7 @@ namespace Rebus.AmazonSQS
             using (var transferUtility = _options.GetOrCreateTransferUtility(context, _credentials, _options.S3Fallback.AmazonS3Config))
             using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(body)))
             {
-                uploadRequest.Key = $"{destinationAddress}/{messageId}.json";
+                uploadRequest.Key = $"{destinationAddress}/{messageId}.txt";
                 uploadRequest.InputStream = stream;
                 transferUtility.Upload(uploadRequest);
             }
