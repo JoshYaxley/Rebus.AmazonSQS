@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Amazon.Runtime;
 using Amazon.S3;
+using Amazon.S3.Model;
 using Amazon.S3.Transfer;
 using Amazon.SQS;
 using Amazon.SQS.Model;
@@ -403,13 +404,15 @@ namespace Rebus.AmazonSQS
 
             var renewalTask = CreateRenewalTaskForMessage(sqsMessage, client);
 
+            var transportMessage = ExtractTransportMessageFrom(sqsMessage, context);
+
             context.OnCompleted(async () =>
             {
                 renewalTask.Dispose();
 
                 // if we get this far, we don't want to pass on the cancellation token
                 // ReSharper disable once MethodSupportsCancellation
-                await client.DeleteMessageAsync(new DeleteMessageRequest(_queueUrl, sqsMessage.ReceiptHandle));
+                await DeleteMessageAsync(transportMessage, sqsMessage, context);
             });
 
             context.OnAborted(() =>
@@ -417,17 +420,36 @@ namespace Rebus.AmazonSQS
                 renewalTask.Dispose();
                 Task.Run(() => client.ChangeMessageVisibilityAsync(_queueUrl, sqsMessage.ReceiptHandle, 0, cancellationToken), cancellationToken).Wait(cancellationToken);
             });
-
-            var transportMessage = ExtractTransportMessageFrom(sqsMessage, context);
+            
             if (MessageIsExpired(transportMessage, sqsMessage))
             {
                 // if the message is expired , we don't want to pass on the cancellation token
                 // ReSharper disable once MethodSupportsCancellation
-                await client.DeleteMessageAsync(new DeleteMessageRequest(_queueUrl, sqsMessage.ReceiptHandle));
+                await DeleteMessageAsync(transportMessage, sqsMessage, context);
                 return null;
             }
             renewalTask.Start();
             return transportMessage;
+        }
+
+        async Task DeleteMessageAsync(TransportMessage transportMessage, Message sqsMessage, ITransactionContext context)
+        {
+            var client = GetSqsClientFromTransactionContext(context);
+
+            await client.DeleteMessageAsync(new DeleteMessageRequest(_queueUrl, sqsMessage.ReceiptHandle));
+
+            if (_options.S3Fallback.Enabled && transportMessage.Headers.ContainsKey(S3FallbackHeader))
+            {
+                using (var transferUtility = _options.GetOrCreateTransferUtility(context, _credentials, _options.S3Fallback.AmazonS3Config))
+                {
+                    var s3FallbackMessage = S3FallbackMessage.FromHeader(transportMessage.Headers[S3FallbackHeader]);
+                    await transferUtility.S3Client.DeleteObjectAsync(new DeleteObjectRequest
+                    {
+                        BucketName = s3FallbackMessage.BucketName,
+                        Key = s3FallbackMessage.Key
+                    });
+                }
+            }
         }
 
         IAsyncTask CreateRenewalTaskForMessage(Message message, IAmazonSQS client)
@@ -517,8 +539,7 @@ namespace Rebus.AmazonSQS
 
         string ReadMessageBodyFromS3(string bucketName, string key, ITransactionContext context)
         {
-            using (var s3Client = _options.GetOrCreateS3Client(context, _credentials, _options.S3Fallback.AmazonS3Config))
-            using (var transferUtility = new TransferUtility(s3Client))
+            using (var transferUtility = _options.GetOrCreateTransferUtility(context, _credentials, _options.S3Fallback.AmazonS3Config))
             {
                 var openStreamRequest = _options.S3Fallback.DefaultOpenStreamRequest;
                 openStreamRequest.BucketName = bucketName;
@@ -609,8 +630,20 @@ namespace Rebus.AmazonSQS
             Key = key;
         }
 
-        public override string ToString() => $"{BucketName}/{Key}";
+        public override string ToString() => $"{BucketName}:{Key}";
+
+        public static S3FallbackMessage FromHeader(string header) => header;
 
         public static implicit operator string(S3FallbackMessage message) => message.ToString();
+
+        public static implicit operator S3FallbackMessage(string header)
+        {
+            var parts = header.Split(new[] {':'}, 2);
+
+            if (parts.Length != 2)
+                throw new InvalidOperationException($"{header} is not a valid value (must be of form 'bucket:key)'");
+
+            return new S3FallbackMessage(parts[0], parts[1]);
+        }
     }
 }
