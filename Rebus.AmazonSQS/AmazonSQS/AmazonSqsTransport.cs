@@ -270,7 +270,7 @@ namespace Rebus.AmazonSQS
         {
             if (!outgoingMessages.Any()) return;
 
-            var client = GetClientFromTransactionContext(context);
+            var client = GetSqsClientFromTransactionContext(context);
 
             var messagesByDestination = outgoingMessages
                 .GroupBy(m => m.DestinationAddress)
@@ -297,7 +297,7 @@ namespace Rebus.AmazonSQS
 
                                     if (serializedSqsMessageByteCount >= _options.S3Fallback.ByteThreshold)
                                     {
-                                        var s3FallbackMessage = UploadS3FallbackMessage(messageId, sqsMessage.Body, message.DestinationAddress);
+                                        var s3FallbackMessage = UploadS3FallbackMessage(messageId, sqsMessage.Body, message.DestinationAddress, context);
 
                                         headers.Add(S3FallbackHeader, s3FallbackMessage);
                                         sqsMessage = new AmazonSQSTransportMessage(headers, JsonConvert.SerializeObject(s3FallbackMessage));
@@ -336,12 +336,11 @@ namespace Rebus.AmazonSQS
                 );
         }
 
-        S3FallbackMessage UploadS3FallbackMessage(string messageId, string body, string destinationAddress)
+        S3FallbackMessage UploadS3FallbackMessage(string messageId, string body, string destinationAddress, ITransactionContext context)
         {
             var uploadRequest = _options.S3Fallback.DefaultUploadRequest;
-
-            using (var s3Client = new AmazonS3Client(_credentials, _options.S3Fallback.AmazonS3Config))
-            using (var transferUtility = new TransferUtility(s3Client))
+            
+            using (var transferUtility = _options.GetOrCreateTransferUtility(context, _credentials, _options.S3Fallback.AmazonS3Config))
             using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(body)))
             {
                 uploadRequest.Key = $"{destinationAddress}/{messageId}.json";
@@ -386,7 +385,7 @@ namespace Rebus.AmazonSQS
                 throw new InvalidOperationException("The queue URL is empty - has the transport not been initialized?");
             }
 
-            var client = GetClientFromTransactionContext(context);
+            var client = GetSqsClientFromTransactionContext(context);
 
             var request = new ReceiveMessageRequest(_queueUrl)
             {
@@ -419,7 +418,7 @@ namespace Rebus.AmazonSQS
                 Task.Run(() => client.ChangeMessageVisibilityAsync(_queueUrl, sqsMessage.ReceiptHandle, 0, cancellationToken), cancellationToken).Wait(cancellationToken);
             });
 
-            var transportMessage = ExtractTransportMessageFrom(sqsMessage);
+            var transportMessage = ExtractTransportMessageFrom(sqsMessage, context);
             if (MessageIsExpired(transportMessage, sqsMessage))
             {
                 // if the message is expired , we don't want to pass on the cancellation token
@@ -498,12 +497,12 @@ namespace Rebus.AmazonSQS
             return sentTime;
         }
 
-        IAmazonSQS GetClientFromTransactionContext(ITransactionContext context)
+        IAmazonSQS GetSqsClientFromTransactionContext(ITransactionContext context)
         {
-            return _options.GetOrCreateClient(context, _credentials, _amazonSqsConfig);
+            return _options.GetOrCreateSqsClient(context, _credentials, _amazonSqsConfig);
         }
 
-        TransportMessage ExtractTransportMessageFrom(Message message)
+        TransportMessage ExtractTransportMessageFrom(Message message, ITransactionContext context)
         {
             var sqsMessage = _serializer.Deserialize(message.Body);
 
@@ -511,14 +510,14 @@ namespace Rebus.AmazonSQS
                 return new TransportMessage(sqsMessage.Headers, GetBodyBytes(sqsMessage.Body));
 
             var s3FallbackMessage = JsonConvert.DeserializeObject<S3FallbackMessage>(sqsMessage.Body);
-            sqsMessage.Body = ReadMessageBodyFromS3(s3FallbackMessage.BucketName, s3FallbackMessage.Key);
+            sqsMessage.Body = ReadMessageBodyFromS3(s3FallbackMessage.BucketName, s3FallbackMessage.Key, context);
 
             return new TransportMessage(sqsMessage.Headers, GetBodyBytes(sqsMessage.Body));
         }
 
-        string ReadMessageBodyFromS3(string bucketName, string key)
+        string ReadMessageBodyFromS3(string bucketName, string key, ITransactionContext context)
         {
-            using (var s3Client = new AmazonS3Client(_credentials, _options.S3Fallback.AmazonS3Config))
+            using (var s3Client = _options.GetOrCreateS3Client(context, _credentials, _options.S3Fallback.AmazonS3Config))
             using (var transferUtility = new TransferUtility(s3Client))
             {
                 var openStreamRequest = _options.S3Fallback.DefaultOpenStreamRequest;
@@ -554,7 +553,7 @@ namespace Rebus.AmazonSQS
                     return address;
                 }
 
-                var client = GetClientFromTransactionContext(transactionContext);
+                var client = GetSqsClientFromTransactionContext(transactionContext);
                 var task = client.GetQueueUrlAsync(address);
 
                 AsyncHelpers.RunSync(() => task);

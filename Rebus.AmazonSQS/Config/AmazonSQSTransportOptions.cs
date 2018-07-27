@@ -13,7 +13,9 @@ namespace Rebus.Config
     /// </summary>
     public class AmazonSQSTransportOptions
     {
-        const string ClientContextKey = "SQS_Client";
+        const string SqsClientContextKey = "SQS_Client";
+        const string S3ClientContextKey = "S3_Client";
+        const string TransferUtilityContextKey = "S3_Transfer_Utility";
 
         /// <summary>
         /// Sets the WaitTimeSeconds on the ReceiveMessage. The default setting is 1, which enables long
@@ -61,13 +63,35 @@ namespace Rebus.Config
                 DefaultOpenStreamRequest = new TransferUtilityOpenStreamRequest()
             };
 
-            GetOrCreateClient = (context, credentials, config) =>
+            GetOrCreateSqsClient = (context, credentials, config) =>
             {
-                return context.GetOrAdd(ClientContextKey, () =>
+                return context.GetOrAdd(SqsClientContextKey, () =>
                 {
                     var amazonSqsClient = new AmazonSQSClient(credentials, config);
                     context.OnDisposed(amazonSqsClient.Dispose);
                     return amazonSqsClient;
+                });
+            };
+
+            GetOrCreateS3Client = (context, credentials, config) =>
+            {
+                return context.GetOrAdd(S3ClientContextKey, () =>
+                {
+                    var amazonS3Client = new AmazonS3Client(credentials, config);
+                    context.OnDisposed(amazonS3Client.Dispose);
+                    return amazonS3Client;
+                });
+            };
+
+            GetOrCreateTransferUtility = (context, credentials, config) =>
+            {
+                return context.GetOrAdd(TransferUtilityContextKey, () =>
+                {
+                    var amazonS3Client = GetOrCreateS3Client(context, credentials, config);
+
+                    var transferUtility = new TransferUtility(amazonS3Client);
+                    context.OnDisposed(transferUtility.Dispose);
+                    return transferUtility;
                 });
             };
         }
@@ -76,7 +100,19 @@ namespace Rebus.Config
         /// Function that is getting or creating the <cref type="IAmazonSQS"/> object that will be used for SQS.
         /// </summary>
         /// <returns>The <cref type="IAmazonSQS"/> object to be used for SQS.</returns>
-        public Func<ITransactionContext, AWSCredentials, AmazonSQSConfig, IAmazonSQS> GetOrCreateClient;
+        public Func<ITransactionContext, AWSCredentials, AmazonSQSConfig, IAmazonSQS> GetOrCreateSqsClient;
+
+        /// <summary>
+        /// Function that is getting or creating the <cref type="IAmazonS3"/> object that will be used for S3.
+        /// </summary>
+        /// <returns>The <cref type="IAmazonS3"/> object to be used for S3.</returns>
+        public Func<ITransactionContext, AWSCredentials, AmazonS3Config, IAmazonS3> GetOrCreateS3Client;
+
+        /// <summary>
+        /// Function that is getting or creating the <cref type="ITransferUtility"/> object that will be used for S3 file transfers.
+        /// </summary>
+        /// <returns>The <cref type="ITransferUtility"/> object to be used for S3 file transfers.</returns>
+        public Func<ITransactionContext, AWSCredentials, AmazonS3Config, ITransferUtility> GetOrCreateTransferUtility;
     }
 
     /// <summary>
