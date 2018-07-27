@@ -17,12 +17,12 @@ namespace Rebus.AmazonSQS.Tests.S3Fallback
             _sqsFactory = new AmazonSqsTransportFactory();
         }
 
-        public ITransport CreateOneWayClient(int byteThreshold = 0)
+        public ITransport CreateOneWayClient(int byteThreshold)
         {
             return _sqsFactory.Create(null, TimeSpan.FromSeconds(30), S3FallbackOptionsHelper.FallbackWithThreshold(byteThreshold));
         }
 
-        public ITransport Create(string inputQueueAddress, int byteThreshold = 0)
+        public ITransport Create(string inputQueueAddress, int byteThreshold)
         {
             return _sqsFactory.Create(inputQueueAddress, TimeSpan.FromSeconds(30), S3FallbackOptionsHelper.FallbackWithThreshold(byteThreshold));
         }
@@ -34,7 +34,7 @@ namespace Rebus.AmazonSQS.Tests.S3Fallback
 
         public ITransport Create(string inputQueueAddress)
         {
-            return CreateOneWayClient(0);
+            return Create(inputQueueAddress, 0);
         }
 
         public void CleanUp()
