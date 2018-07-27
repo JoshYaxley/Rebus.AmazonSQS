@@ -14,7 +14,7 @@ namespace Rebus.AmazonSQS.Tests.S3Fallback
         protected override void SetUp()
         {
             BrilliantQueueName = TestConfig.GetName("roundtrippin");
-            Transport = AmazonSqsTransportFactory.CreateTransport(BrilliantQueueName, TimeSpan.FromSeconds(30), S3FallbackOptionsHelper.AlwaysFallback);
+            Transport = AmazonSqsTransportFactory.CreateTransport(BrilliantQueueName, TimeSpan.FromSeconds(30), S3FallbackOptionsHelper.FallbackWithThreshold());
             Transport.Purge();
         }
     }

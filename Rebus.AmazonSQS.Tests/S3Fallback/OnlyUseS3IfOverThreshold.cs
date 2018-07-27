@@ -19,9 +19,9 @@ using Rebus.Transport;
 namespace Rebus.AmazonSQS.Tests.S3Fallback
 {
     [TestFixture, Category(Category.S3Fallback)]
-    public class CanSendTooBigMessages : SqsFixtureBase
+    public class OnlyUseS3IfOverThreshold : SqsFixtureBase
     {
-        ITransportFactory _factory;
+        AmazonSqsWithS3FallbackTransportFactory _factory;
         CancellationToken _cancellationToken;
 
         protected override void SetUp()
@@ -38,15 +38,15 @@ namespace Rebus.AmazonSQS.Tests.S3Fallback
         }
 
         [Test]
-        public async Task CanSendAndReceive()
+        public async Task HeaderPresentIfOverThreshold()
         {
             var input1QueueName = TestConfig.GetName("input1");
             var input2QueueName = TestConfig.GetName("input2");
 
-            var input1 = _factory.Create(input1QueueName);
-            var input2 = _factory.Create(input2QueueName);
+            var input1 = _factory.Create(input1QueueName, 1000);
+            var input2 = _factory.Create(input2QueueName, 1000);
 
-            var messageContents = string.Concat(Enumerable.Repeat("DET HER ER BARE EN NORMAL STRENG", 10000));
+            var messageContents = string.Concat(Enumerable.Repeat("0", 2000));
 
             await WithContext(async context =>
             {
@@ -56,9 +56,32 @@ namespace Rebus.AmazonSQS.Tests.S3Fallback
             await WithContext(async context =>
             {
                 var transportMessage = await input2.Receive(context, _cancellationToken);
-                var stringBody = GetStringBody(transportMessage);
 
-                Assert.That(stringBody, Is.EqualTo(messageContents));
+                Assert.That(transportMessage.Headers.ContainsKey(AmazonSQSTransport.S3FallbackHeader));
+            });
+        }
+
+        [Test]
+        public async Task HeaderAbsentIfUnderThreshold()
+        {
+            var input1QueueName = TestConfig.GetName("input1");
+            var input2QueueName = TestConfig.GetName("input2");
+
+            var input1 = _factory.Create(input1QueueName, 1000);
+            var input2 = _factory.Create(input2QueueName, 1000);
+
+            var messageContents = string.Concat(Enumerable.Repeat("0", 100));
+
+            await WithContext(async context =>
+            {
+                await input1.Send(input2QueueName, MessageWith(messageContents), context);
+            });
+
+            await WithContext(async context =>
+            {
+                var transportMessage = await input2.Receive(context, _cancellationToken);
+
+                Assert.That(!transportMessage.Headers.ContainsKey(AmazonSQSTransport.S3FallbackHeader));
             });
         }
     }

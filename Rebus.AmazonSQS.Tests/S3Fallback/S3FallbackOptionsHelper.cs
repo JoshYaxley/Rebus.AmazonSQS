@@ -12,12 +12,12 @@ namespace Rebus.AmazonSQS.Tests.S3Fallback
 {
     public static class S3FallbackOptionsHelper
     {
-        public static AmazonSQSTransportOptions AlwaysFallback => new AmazonSQSTransportOptions
+        public static AmazonSQSTransportOptions FallbackWithThreshold(int byteThreshold = 0) => new AmazonSQSTransportOptions
         {
             S3Fallback = new S3FallbackOptions
             {
                 Enabled = true,
-                ByteThreshold = 0,
+                ByteThreshold = byteThreshold,
                 AmazonS3Config = new AmazonS3Config
                 {
                     RegionEndpoint = AmazonSqsTransportFactory.ConnectionInfo.RegionEndpoint
