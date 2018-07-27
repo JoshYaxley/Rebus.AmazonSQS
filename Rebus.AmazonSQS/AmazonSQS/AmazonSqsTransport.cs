@@ -276,6 +276,9 @@ namespace Rebus.AmazonSQS
             if (!outgoingMessages.Any()) return;
 
             var client = GetSqsClientFromTransactionContext(context);
+            var transferUtility = _options.S3Fallback.Enabled
+                ? _options.GetOrCreateTransferUtility(context, _credentials, _options.S3Fallback.AmazonS3Config)
+                : null;
 
             var messagesByDestination = outgoingMessages
                 .GroupBy(m => m.DestinationAddress)
@@ -302,7 +305,7 @@ namespace Rebus.AmazonSQS
 
                                     if (serializedSqsMessageByteCount >= _options.S3Fallback.ByteThreshold)
                                     {
-                                        var s3FallbackMessage = UploadS3FallbackMessage(messageId, sqsMessage.Body, message.DestinationAddress, context);
+                                        var s3FallbackMessage = UploadS3FallbackMessage(messageId, sqsMessage.Body, message.DestinationAddress, transferUtility);
 
                                         headers.Add(S3FallbackHeader, s3FallbackMessage);
                                         sqsMessage = new AmazonSQSTransportMessage(headers, JsonConvert.SerializeObject(s3FallbackMessage));
@@ -341,11 +344,10 @@ namespace Rebus.AmazonSQS
                 );
         }
 
-        S3FallbackMessage UploadS3FallbackMessage(string messageId, string body, string destinationAddress, ITransactionContext context)
+        S3FallbackMessage UploadS3FallbackMessage(string messageId, string body, string destinationAddress, ITransferUtility transferUtility)
         {
             var uploadRequest = _options.S3Fallback.DefaultUploadRequest;
             
-            using (var transferUtility = _options.GetOrCreateTransferUtility(context, _credentials, _options.S3Fallback.AmazonS3Config))
             using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(body)))
             {
                 uploadRequest.Key = $"{destinationAddress}/{messageId}.txt";
